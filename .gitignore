@@ -1,5 +1,5 @@
-module
-vis
-__pycache__
+module/
+vis/
+__pycache__/
 .DS_Store
 datasets
