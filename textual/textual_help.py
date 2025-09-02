@@ -7,13 +7,14 @@ from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.preprocessing import normalize as sk_normalize
 
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
 
     _HAS_ST = True
-    _MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    _ST_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 except Exception as e:
     print(f"Error ({e})\n\n sentence-transformers not available, falling back to TF-IDF for similarity.")
     from sklearn.metrics.pairwise import cosine_similarity
@@ -110,7 +111,6 @@ _ACTOR_NOUNS = {
     "actor": "neutral",
     "individual": "neutral",
 }
-
 _PRONOUNS = {"male": {"he", "him", "his"}, "female": {"she", "her", "hers"}, "neutral": {"they", "them", "their", "theirs"}}
 
 
@@ -267,14 +267,127 @@ def redundancy_analysis(df, n_values=(2, 3)):
 # =========================
 # 5) Intra-motion similarity
 # =========================
-def sentence_embeddings(texts):
-    if _HAS_ST:
-        emb = _MODEL.encode(list(texts), batch_size=128, show_progress_bar=False, normalize_embeddings=True)
-        return emb
-    # TF-IDF fallback
+def _mean_pool(last_hidden, attention_mask):
+    # last_hidden: [B, T, H], attention_mask: [B, T]
+    mask = attention_mask.unsqueeze(-1).float()  # [B, T, 1]
+    masked = last_hidden * mask
+    summed = masked.sum(dim=1)  # [B, H]
+    counts = mask.sum(dim=1).clamp(min=1e-6)  # [B, 1]
+    return summed / counts
+
+
+def _mean_pairwise_cosine_from_normed(V):
+    """
+    V: [N, D], assumed L2-normalized.
+    Returns mean cosine similarity over all pairs (upper triangle, excl diag).
+    """
+    n = len(V)
+    if n < 2:
+        return np.nan
+    S = np.clip(V @ V.T, -1.0, 1.0)
+    iu = np.triu_indices(n, k=1)
+    return float(S[iu].mean())
+
+
+def intramotion_similarity(df, model="minilm"):
+    df = ensure_parsed(df.copy())
+    # Precompute embeddings once
+    Z, label = sentence_embeddings(df["description"].tolist(), model=model)
+    # Map row idx -> vector
+    idx_to_vec = {i: Z[i] for i in range(len(Z))}
+
+    rows = []
+    for mid, sub in df.reset_index(drop=True).groupby("motion_id"):
+        idxs = sub.index.tolist()
+        V = np.stack([idx_to_vec[i] for i in idxs], axis=0)
+        mpc = _mean_pairwise_cosine_from_normed(V)
+        rows.append({"motion_id": mid, "mean_intra_caption_sim": mpc, "num_captions": len(idxs)})
+
+    out = pd.DataFrame(rows).sort_values("mean_intra_caption_sim", ascending=False)
+    summary = {
+        "backend": label,
+        "mean_of_means": float(out["mean_intra_caption_sim"].mean(skipna=True)),
+        "median_of_means": float(out["mean_intra_caption_sim"].median(skipna=True)),
+        "quantiles": out["mean_intra_caption_sim"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).to_dict(),
+    }
+    return out, summary
+
+
+def intramotion_similarity_compare(df):
+    print("\n=== Intra-motion Similarity (MiniLM) ===")
+    mini_df, mini_sum = intramotion_similarity(df, model="minilm")
+    print(mini_sum)
+    print("Top 3 most consistent motions (MiniLM):")
+    print(mini_df.head(3)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+
+    print("\n=== Intra-motion Similarity (DistilBERT-uncased) ===")
+    dist_df, dist_sum = intramotion_similarity(df, model="distilbert")
+    print(dist_sum)
+    print("Top 3 most consistent motions (DistilBERT):")
+    print(dist_df.head(3)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+
+    # Side-by-side summary table
+    cmp_tbl = pd.DataFrame(
+        [
+            {"backend": mini_sum["backend"], **{k: v for k, v in mini_sum.items() if k != "backend"}},
+            {"backend": dist_sum["backend"], **{k: v for k, v in dist_sum.items() if k != "backend"}},
+        ]
+    )
+    return {"minilm": (mini_df, mini_sum), "distilbert": (dist_df, dist_sum), "summary_table": cmp_tbl}
+
+
+def sentence_embeddings(texts, model="minilm"):
+    """
+    backend: "minilm" | "distilbert" | "tfidf"
+    Returns: np.ndarray [N, D] (L2-normalized), and a string label
+    """
+    texts = list(texts)
+    label = model
+
+    if model.lower() == "minilm" and _HAS_ST:
+        emb = _ST_MODEL.encode(texts, batch_size=128, show_progress_bar=False, normalize_embeddings=True)
+        return np.asarray(emb), "minilm"
+
+    if model.lower() == "distilbert":
+        try:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+        except Exception:
+            # fallback if transformers/torch not available
+            X = _TFIDF.fit_transform(texts)
+            Z = sk_normalize(X).toarray()
+            return Z, "tfidf_fallback_distilbert_missing"
+
+        tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+        mdl = AutoModel.from_pretrained("distilbert-base-uncased")
+        if torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+        print("Using device:", device)
+        # device = "cuda" if torch.cuda.is_available() else "cpu"
+        mdl = mdl.to(device)
+        mdl.eval()
+
+        all_vecs = []
+        bs = 64
+        with torch.no_grad():
+            for i in range(0, len(texts), bs):
+                batch = texts[i : i + bs]
+                inputs = tok(batch, padding=True, truncation=True, return_tensors="pt").to(device)
+                out = mdl(**inputs)
+                pooled = _mean_pool(out.last_hidden_state, inputs["attention_mask"])  # [B, H]
+                all_vecs.append(pooled.cpu())
+        Z = torch.cat(all_vecs, dim=0).numpy()
+        # L2 normalize
+        Z = Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-9)
+        return Z, "distilbert-meanpool"
+
+    # TF-IDF (explicit request or fallback)
     X = _TFIDF.fit_transform(texts)
-    # cosine_similarity on-the-fly later
-    return X
+    Z = sk_normalize(X).toarray()
+    return Z, "tfidf"
 
 
 def mean_pairwise_cosine(emb):
@@ -293,20 +406,20 @@ def mean_pairwise_cosine(emb):
     return float(triu.mean())
 
 
-def intramotion_similarity(df):
-    df = ensure_parsed(df.copy())
-    results = []
-    for mid, sub in df.groupby("motion_id"):
-        emb = sentence_embeddings(sub["description"].tolist())
-        mpc = mean_pairwise_cosine(emb)
-        results.append({"motion_id": mid, "mean_intra_caption_sim": mpc, "num_captions": len(sub)})
-    out = pd.DataFrame(results)
-    summary = {
-        "mean_of_means": float(out["mean_intra_caption_sim"].mean(skipna=True)),
-        "median_of_means": float(out["mean_intra_caption_sim"].median(skipna=True)),
-        "quantiles": out["mean_intra_caption_sim"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).to_dict(),
-    }
-    return out.sort_values("mean_intra_caption_sim", ascending=False), summary
+# def intramotion_similarity(df):
+#     df = ensure_parsed(df.copy())
+#     results = []
+#     for mid, sub in df.groupby("motion_id"):
+#         emb = sentence_embeddings(sub["description"].tolist())
+#         mpc = mean_pairwise_cosine(emb)
+#         results.append({"motion_id": mid, "mean_intra_caption_sim": mpc, "num_captions": len(sub)})
+#     out = pd.DataFrame(results)
+#     summary = {
+#         "mean_of_means": float(out["mean_intra_caption_sim"].mean(skipna=True)),
+#         "median_of_means": float(out["mean_intra_caption_sim"].median(skipna=True)),
+#         "quantiles": out["mean_intra_caption_sim"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).to_dict(),
+#     }
+#     return out.sort_values("mean_intra_caption_sim", ascending=False), summary
 
 
 # =========================
@@ -511,6 +624,276 @@ def lexical_richness_analysis(df):
     }
 
 
+# =========================
+# spaCy structural complexity
+# =========================
+def _dep_depth_for_token(tok):
+    """Depth of a token in the dependency tree (root depth = 0)."""
+    depth = 0
+    cur = tok
+    while cur.head is not cur:
+        depth += 1
+        cur = cur.head
+    return depth
+
+
+def spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None, batch_size=256):
+    """
+    Computes:
+      - avg_dep_depth: mean dependency depth per caption (avg over tokens)
+      - avg_sentences_per_caption
+      - avg_verbs_per_caption (from spaCy)
+      - temporal/connective rate via tokens: then/while/before/after/and (spaCy tokens; case-insensitive)
+    If spaCy/model is missing, returns a dict with 'available': False.
+    """
+    try:
+        import spacy
+    except Exception:
+        return {"available": False, "reason": "spaCy not installed"}
+
+    try:
+        nlp = spacy.load(spacy_model, disable=["ner"])
+    except Exception:
+        # try to download on the fly if user permits; otherwise fail gracefully
+        return {"available": False, "reason": f"spaCy model '{spacy_model}' not available"}
+
+    texts = df["description"].tolist()
+    if max_docs is not None:
+        texts = texts[:max_docs]
+
+    total_depth = 0.0
+    total_tokens = 0
+    total_sents = 0
+    total_docs = 0
+    verbs_per_cap = []
+    conj_markers = {"and", "then", "while", "before", "after"}
+    connective_hits = 0
+
+    for doc in nlp.pipe(texts, batch_size=batch_size):
+        if len(doc) == 0:
+            continue
+        depths = [_dep_depth_for_token(tok) for tok in doc]
+        total_depth += sum(depths)
+        total_tokens += len(doc)
+        total_sents += len(list(doc.sents))
+        total_docs += 1
+        verbs_per_cap.append(sum(1 for t in doc if t.pos_ == "VERB"))
+        connective_hits += sum(1 for t in doc if t.text.lower() in conj_markers)
+
+    if total_docs == 0 or total_tokens == 0:
+        return {"available": True, "note": "no tokens/docs", "avg_dep_depth": float("nan")}
+
+    return {
+        "available": True,
+        "avg_dep_depth": total_depth / total_tokens,  # token-level mean
+        "avg_sentences_per_caption": total_sents / total_docs,
+        "avg_verbs_per_caption_spacy": float(np.mean(verbs_per_cap)),
+        "connective_token_rate": connective_hits / total_tokens,  # fraction of tokens that are connectives
+        "processed_docs": total_docs,
+    }
+
+
+# =========================
+# Caption distance per motion
+# =========================
+import numpy as np
+
+
+def _get_sentence_embeddings(texts):
+    """
+    Returns L2-normalized embeddings. Prefers sentence-transformers MiniLM;
+    falls back to TF-IDF.
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        Z = model.encode(list(texts), batch_size=128, show_progress_bar=False, normalize_embeddings=True)
+        return np.asarray(Z), "minilm"
+    except Exception:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.preprocessing import normalize
+
+        vec = TfidfVectorizer(min_df=2, max_df=0.9, ngram_range=(1, 2))
+        X = vec.fit_transform(texts)
+        Z = normalize(X)  # L2 row-norm
+        return Z.toarray(), "tfidf"
+
+
+def _pairwise_stats_from_vectors(V, metric="cosine"):
+    """
+    Compute min/median/mean/max pairwise distance for a set of vectors V (n x d).
+    metric='cosine' uses 1 - cosine_sim (for normalized vectors, cosine_sim = dot).
+    """
+    n = len(V)
+    if n < 2:
+        return dict(min=np.nan, median=np.nan, mean=np.nan, max=np.nan, n_pairs=0)
+    # Cosine distance for normalized vectors
+    S = np.clip(V @ V.T, -1.0, 1.0)  # similarity
+    # take upper triangle distances
+    iu = np.triu_indices(n, k=1)
+    D = 1.0 - S[iu]
+    return dict(
+        min=float(np.min(D)),
+        median=float(np.median(D)),
+        mean=float(np.mean(D)),
+        max=float(np.max(D)),
+        n_pairs=len(D),
+    )
+
+
+def _train_vae_on_embeddings(E, latent_dim=16, epochs=10, batch_size=256, lr=1e-3, seed=0):
+    """
+    Tiny MLP VAE on embedding space E (n x d). Returns encoder that maps to mu (latent mean).
+    If torch is unavailable, returns None.
+    Designed to be quick; increase epochs for better fit.
+    """
+    try:
+        import math
+
+        import torch
+        import torch.nn as nn
+        import torch.nn.functional as F
+
+        torch.manual_seed(seed)
+    except Exception:
+        return None, "torch_unavailable"
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    X = torch.tensor(E, dtype=torch.float32, device=device)
+    n, d = X.shape
+
+    h = 128
+
+    class VAE(nn.Module):
+        def __init__(self, d_in, d_lat=16):
+            super().__init__()
+            self.enc1 = nn.Linear(d_in, h)
+            self.enc2 = nn.Linear(h, h)
+            self.mu = nn.Linear(h, d_lat)
+            self.logv = nn.Linear(h, d_lat)
+            self.dec1 = nn.Linear(d_lat, h)
+            self.dec2 = nn.Linear(h, d_in)
+
+        def encode(self, x):
+            z = F.relu(self.enc1(x))
+            z = F.relu(self.enc2(z))
+            return self.mu(z), self.logv(z)
+
+        def reparam(self, mu, logv):
+            std = torch.exp(0.5 * logv)
+            eps = torch.randn_like(std)
+            return mu + eps * std
+
+        def decode(self, z):
+            z = F.relu(self.dec1(z))
+            return self.dec2(z)
+
+        def forward(self, x):
+            mu, logv = self.encode(x)
+            z = self.reparam(mu, logv)
+            xhat = self.decode(z)
+            return xhat, mu, logv
+
+    model = VAE(d, latent_dim).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+
+    def loss_fn(x, xhat, mu, logv):
+        # MSE recon + KL (standard normal prior)
+        recon = F.mse_loss(xhat, x, reduction="mean")
+        kl = -0.5 * torch.mean(1 + logv - mu.pow(2) - logv.exp())
+        return recon + kl, recon, kl
+
+    model.train()
+    num_batches = int(np.ceil(n / batch_size))
+    for _ in range(epochs):
+        perm = torch.randperm(n, device=device)
+        for bi in range(num_batches):
+            idx = perm[bi * batch_size : (bi + 1) * batch_size]
+            xb = X[idx]
+            xhat, mu, logv = model(xb)
+            loss, recon, kl = loss_fn(xb, xhat, mu, logv)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+    model.eval()
+
+    @torch.no_grad()
+    def encode_mu(x_np):
+        xt = torch.tensor(x_np, dtype=torch.float32, device=device)
+        mu, _ = model.encode(xt)
+        return mu.cpu().numpy()
+
+    return encode_mu, "ok"
+
+
+def per_motion_distance_stats(df, use_vae=True, vae_latent_dim=16, vae_epochs=10):
+    """
+    For each motion_id:
+      - embed all its captions
+      - (optionally) map embeddings through a tiny VAE encoder (use mu as latent)
+      - compute min/median/mean/max pairwise distances
+    Returns:
+      summary_df (motion_id, n_caps, min, median, mean, max),
+      global_summary (min/median/mean/max across motions of 'mean' or 'median'—we report both)
+    """
+    df = ensure_parsed(df.copy())
+    # Prepare embeddings for ALL captions once, then index by motion
+    E, emb_kind = _get_sentence_embeddings(df["description"].tolist())
+
+    # Optional tiny VAE on global embedding space (quick fit)
+    encode_mu, vae_status = (None, "skipped")
+    if use_vae:
+        enc, vae_status = _train_vae_on_embeddings(E, latent_dim=vae_latent_dim, epochs=vae_epochs)
+        if enc is not None:
+            Z = enc(E)  # latent means
+            z_kind = f"{emb_kind}+vae"
+        else:
+            Z = E  # fallback
+            z_kind = f"{emb_kind}+no-vae"
+    else:
+        Z = E
+        z_kind = emb_kind
+
+    # map rows to vectors
+    idx_map = {i: vec for i, vec in enumerate(Z)}
+    rows = []
+    for mid, sub in df.reset_index(drop=True).groupby("motion_id"):
+        idxs = sub.index.tolist()
+        V = np.stack([idx_map[i] for i in idxs], axis=0)
+        stats = _pairwise_stats_from_vectors(V, metric="cosine")
+        rows.append(
+            {
+                "motion_id": mid,
+                "n_captions": len(idxs),
+                "dist_min": stats["min"],
+                "dist_median": stats["median"],
+                "dist_mean": stats["mean"],
+                "dist_max": stats["max"],
+            }
+        )
+    out = pd.DataFrame(rows).sort_values("dist_mean", ascending=False)
+
+    global_summary = {
+        "embedding_space": z_kind,
+        "vae_status": vae_status,
+        "caption_distance_mean_stats": {
+            "min": float(np.nanmin(out["dist_mean"])),
+            "median": float(np.nanmedian(out["dist_mean"])),
+            "mean": float(np.nanmean(out["dist_mean"])),
+            "max": float(np.nanmax(out["dist_mean"])),
+        },
+        "caption_distance_median_stats": {
+            "min": float(np.nanmin(out["dist_median"])),
+            "median": float(np.nanmedian(out["dist_median"])),
+            "mean": float(np.nanmean(out["dist_median"])),
+            "max": float(np.nanmax(out["dist_median"])),
+        },
+    }
+    return out, global_summary
+
+
 def analysis_routine(df: pd.DataFrame):
     if df is None:
         raise SystemExit("Please create a DataFrame `df` with columns: motion_id, description, pos_tags, num1, num2")
@@ -551,12 +934,10 @@ def analysis_routine(df: pd.DataFrame):
     print("Top trigrams:", red["top_ngrams"][3][:10], "...")
 
     print("\n\n")
-    # D) Intra-motion similarity
-    by_motion_sim, sim_summary = intramotion_similarity(df)
-    print("\n=== Intra-motion Similarity ===")
-    print(sim_summary)
-    print("Most consistent motions (top 5):")
-    print(by_motion_sim.head(5)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+    # D) Intra-motion similarity (both MiniLM & DistilBERT)
+    both = intramotion_similarity_compare(df)
+    print("\n=== Backend comparison ===")
+    print(both["summary_table"])
 
     print("\n\n")
     # E) (Optional) Quick clustering of captions
@@ -579,3 +960,25 @@ def analysis_routine(df: pd.DataFrame):
     print("\n=== Linguistic Richness & Structural Variety ===")
     for k, v in richness.items():
         print(f"{k}: {v:.4f}")
+
+    print("\n\n")
+    # G) spaCy structural complexity
+    spa = spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None)
+    print("\n=== spaCy Structural Complexity ===")
+    if not spa.get("available", False):
+        print("spaCy unavailable:", spa.get("reason"))
+    else:
+        for k, v in spa.items():
+            if k == "available":
+                continue
+            print(f"{k}: {v}")
+
+    print("\n\n")
+    # H) Per-motion caption distances (MiniLM → VAE optional)
+    dist_df, dist_summary = per_motion_distance_stats(df, use_vae=True, vae_latent_dim=16, vae_epochs=10)
+    print("\n=== Caption Distance per Motion ===")
+    print("Space:", dist_summary["embedding_space"], "| VAE:", dist_summary["vae_status"])
+    print("Mean-distance stats:", dist_summary["caption_distance_mean_stats"])
+    print("Median-distance stats:", dist_summary["caption_distance_median_stats"])
+    print("Most diverse motions (top 5 by mean distance):")
+    print(dist_df.head(5)[["motion_id", "n_captions", "dist_mean", "dist_median", "dist_max", "dist_min"]])
