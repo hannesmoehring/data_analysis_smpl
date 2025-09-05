@@ -1,30 +1,18 @@
 import itertools
+import torch
 import math
 import os
 import re
 from collections import Counter, defaultdict
-
+from sentence_transformers import SentenceTransformer, InputExample, losses
+from torch.utils.data import DataLoader
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import normalize as sk_normalize
+from tools.IMS import IntraMotionSimilarity
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-try:
-    from sentence_transformers import SentenceTransformer
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    _HAS_ST = True
-    _ST_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-except Exception as e:
-    print(f"Error ({e})\n\n sentence-transformers not available, falling back to TF-IDF for similarity.")
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    _HAS_ST = False
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-_TFIDF = TfidfVectorizer(min_df=2, max_df=0.9, ngram_range=(1, 2))
+from tools.utility import *
 
 
 def read_data_texts(text_dir):
@@ -143,37 +131,6 @@ def tokens_by_pos(parsed):
 
 def ngrams(tokens, n=2):
     return [" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1)] if len(tokens) >= n else []
-
-
-def _clean_text_df(df):
-    df = df.copy()
-    df["description"] = df["description"].astype(str)
-    df = df[df["description"].str.strip().ne("")]
-    df = df.dropna(subset=["description"])
-    return df
-
-
-def _to_2d_float32(X):
-    """
-    Ensure X is a dense (n_samples, n_features) float32 ndarray.
-    Handles lists of arrays, sparse matrices, etc.
-    """
-    # sparse -> dense
-    if hasattr(X, "toarray"):
-        X = X.toarray()
-    # list of vectors -> stack
-    if isinstance(X, (list, tuple)):
-        X = [np.asarray(x, dtype=np.float32).ravel() for x in X]
-        X = np.vstack(X) if len(X) else np.zeros((0, 0), dtype=np.float32)
-    else:
-        X = np.asarray(X, dtype=np.float32)
-    if X.ndim != 2:
-        # final guard: try vstack if it's 1D or object-y
-        try:
-            X = np.vstack([np.asarray(row, dtype=np.float32).ravel() for row in X])
-        except Exception as e:
-            raise ValueError(f"Features are not 2D; got shape {getattr(X,'shape',None)}") from e
-    return X
 
 
 # =========================
@@ -296,239 +253,17 @@ def redundancy_analysis(df, n_values=(2, 3)):
     return {"duplicate_rate": dup_rate, "top_ngrams": ngram_freq}
 
 
-# =========================
-# 5) Intra-motion similarity
-# =========================
-def _mean_pool(last_hidden, attention_mask):
-    # last_hidden: [B, T, H], attention_mask: [B, T]
-    mask = attention_mask.unsqueeze(-1).float()  # [B, T, 1]
-    masked = last_hidden * mask
-    summed = masked.sum(dim=1)  # [B, H]
-    counts = mask.sum(dim=1).clamp(min=1e-6)  # [B, 1]
-    return summed / counts
+# ==========================
+# 5) Intra-motion similarity (IMS)
+# ==========================
+ims = IntraMotionSimilarity(ensure_parsed_func=ensure_parsed)
 
 
-def _mean_pairwise_cosine_from_normed(V):
-    """
-    V: [N, D], assumed L2-normalized.
-    Returns mean cosine similarity over all pairs (upper triangle, excl diag).
-    """
-    n = len(V)
-    if n < 2:
-        return np.nan
-    S = np.clip(V @ V.T, -1.0, 1.0)
-    iu = np.triu_indices(n, k=1)
-    return float(S[iu].mean())
-
-
-def intramotion_similarity(df, model="minilm"):
-    df = ensure_parsed(df.copy())
-    # Precompute embeddings once
-    Z, label = sentence_embeddings(df["description"].tolist(), model=model)
-    # Map row idx -> vector
-    idx_to_vec = {i: Z[i] for i in range(len(Z))}
-
-    rows = []
-    for mid, sub in df.reset_index(drop=True).groupby("motion_id"):
-        idxs = sub.index.tolist()
-        V = np.stack([idx_to_vec[i] for i in idxs], axis=0)
-        mpc = _mean_pairwise_cosine_from_normed(V)
-        rows.append({"motion_id": mid, "mean_intra_caption_sim": mpc, "num_captions": len(idxs)})
-
-    out = pd.DataFrame(rows).sort_values("mean_intra_caption_sim", ascending=False)
-    summary = {
-        "backend": label,
-        "mean_of_means": float(out["mean_intra_caption_sim"].mean(skipna=True)),
-        "median_of_means": float(out["mean_intra_caption_sim"].median(skipna=True)),
-        "quantiles": out["mean_intra_caption_sim"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).to_dict(),
-    }
-    return out, summary
-
-
-def intramotion_similarity_compare(df):
-    print("\n=== Intra-motion Similarity (MiniLM) ===")
-    mini_df, mini_sum = intramotion_similarity(df, model="minilm")
-    print(mini_sum)
-    print("Top 10 most consistent motions (MiniLM):")
-    print(mini_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
-    mini_df.sort_values("mean_intra_caption_sim", ascending=True, inplace=True)
-    print("Top 10 least consistent motions (MiniLM):")
-    print(mini_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
-
-    print("\n=== Intra-motion Similarity (DistilBERT-uncased) ===")
-    dist_df, dist_sum = intramotion_similarity(df, model="distilbert")
-    print(dist_sum)
-    print("Top 10 most consistent motions (DistilBERT):")
-    print(dist_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
-    dist_df.sort_values("mean_intra_caption_sim", ascending=True, inplace=True)
-    print("Top 10 least consistent motions (DistilBERT):")
-    print(dist_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
-
-    # Side-by-side summary table
-    cmp_tbl = pd.DataFrame(
-        [
-            {"backend": mini_sum["backend"], **{k: v for k, v in mini_sum.items() if k != "backend"}},
-            {"backend": dist_sum["backend"], **{k: v for k, v in dist_sum.items() if k != "backend"}},
-        ]
-    )
-    return {"minilm": (mini_df, mini_sum), "distilbert": (dist_df, dist_sum), "summary_table": cmp_tbl}
-
-
-def sentence_embeddings(texts, model="minilm"):
-    """
-    backend: "minilm" | "distilbert" | "tfidf"
-    Returns: np.ndarray [N, D] (L2-normalized), and a string label
-    """
-    texts = list(texts)
-    label = model
-
-    if model.lower() == "minilm" and _HAS_ST:
-        emb = _ST_MODEL.encode(texts, batch_size=128, show_progress_bar=False, normalize_embeddings=True)
-        return np.asarray(emb), "minilm"
-
-    if model.lower() == "distilbert":
-        try:
-            import torch
-            from transformers import AutoModel, AutoTokenizer
-        except Exception:
-            # fallback if transformers/torch not available
-            X = _TFIDF.fit_transform(texts)
-            Z = sk_normalize(X).toarray()
-            return Z, "tfidf_fallback_distilbert_missing"
-
-        tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-        mdl = AutoModel.from_pretrained("distilbert-base-uncased")
-        if torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-
-        print("Using device:", device)
-        # device = "cuda" if torch.cuda.is_available() else "cpu"
-        mdl = mdl.to(device)
-        mdl.eval()
-
-        all_vecs = []
-        bs = 128
-        with torch.no_grad():
-            for i in range(0, len(texts), bs):
-                batch = texts[i : i + bs]
-                inputs = tok(batch, padding=True, truncation=True, return_tensors="pt").to(device)
-                out = mdl(**inputs)
-                pooled = _mean_pool(out.last_hidden_state, inputs["attention_mask"])  # [B, H]
-                all_vecs.append(pooled.cpu())
-        Z = torch.cat(all_vecs, dim=0).numpy()
-        # L2 normalize
-        Z = Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-9)
-        return Z, "distilbert-meanpool"
-
-    # TF-IDF (explicit request or fallback)
-    X = _TFIDF.fit_transform(texts)
-    Z = sk_normalize(X).toarray()
-    return Z, "tfidf"
-
-
-def mean_pairwise_cosine(emb):
-    """
-    emb: np.array [N,D] if ST; sparse if TF-IDF
-    returns mean of upper-triangular pairwise cosine (excluding self-similarity)
-    """
-    if getattr(emb, "ndim", None) is None:  # sparse case (TF-IDF)
-        sims = cosine_similarity(emb)
-    else:
-        sims = np.clip(np.dot(emb, emb.T), -1, 1)  # normalized ST embeddings
-    n = sims.shape[0]
-    if n < 2:
-        return np.nan
-    triu = sims[np.triu_indices(n, k=1)]
-    return float(triu.mean())
-
-
-# def intramotion_similarity(df):
-#     df = ensure_parsed(df.copy())
-#     results = []
-#     for mid, sub in df.groupby("motion_id"):
-#         emb = sentence_embeddings(sub["description"].tolist())
-#         mpc = mean_pairwise_cosine(emb)
-#         results.append({"motion_id": mid, "mean_intra_caption_sim": mpc, "num_captions": len(sub)})
-#     out = pd.DataFrame(results)
-#     summary = {
-#         "mean_of_means": float(out["mean_intra_caption_sim"].mean(skipna=True)),
-#         "median_of_means": float(out["mean_intra_caption_sim"].median(skipna=True)),
-#         "quantiles": out["mean_intra_caption_sim"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).to_dict(),
-#     }
-#     return out.sort_values("mean_intra_caption_sim", ascending=False), summary
-
-
-# =========================
-# 6) Simple clustering (optional)
-# =========================
-
-
-def cluster_captions(df, k=20, backend="minilm", random_state=0):
-    """
-    backend: 'minilm' | 'distilbert' | 'tfidf'
-    Returns:
-      df_with_cluster, top_terms (dict or None)
-    """
-    df = ensure_parsed(_clean_text_df(df))
-
-    texts = df["description"].tolist()
-    if len(texts) == 0:
-        raise ValueError("No non-empty descriptions to cluster.")
-
-    # Build features
-    if backend == "tfidf":
-        Xs = _TFIDF.fit_transform(texts)  # keep sparse for now
-        terms = _TFIDF.get_feature_names_out()
-        top_terms_source = "tfidf"
-    else:
-        # use your unified embedding getter (MiniLM / DistilBERT)
-        Xs, _label = sentence_embeddings(texts, model=backend)
-        terms = None
-        top_terms_source = None
-
-    # Ensure dense 2D float32
-    X = _to_2d_float32(Xs)
-
-    n = X.shape[0]
-    if n < 2:
-        raise ValueError(f"Need at least 2 samples to cluster, got {n}.")
-    if k > n:
-        k = n  # auto-reduce clusters
-
-    # KMeans
-    km = KMeans(n_clusters=k, n_init="auto", random_state=random_state)
-    labels = km.fit_predict(X)
-
-    out = df.assign(cluster=labels)
-
-    # Optional: top terms only meaningful for TF-IDF
-    top_terms = None
-    if top_terms_source == "tfidf" and terms is not None:
-        cent = km.cluster_centers_
-        # centers are in TF-IDF feature space
-        top_terms = {c: [terms[i] for i in cent[c].argsort()[-10:][::-1]] for c in range(k)}
-
-    return out, top_terms
-
-
-# =========================
-# 7) Tiny topic overview (optional, TF-IDF + top terms)
-# =========================
-def topic_overview(df, n_topics=10, top_k=12, random_state=0):
-    """
-    Not full LDA/BERTOPIC, just quick KMeans over TF-IDF to see coarse topics.
-    Works even without sentence-transformers.
-    """
-    df = ensure_parsed(df.copy())
-    X = _TFIDF.fit_transform(df["description"])
-    km = KMeans(n_clusters=n_topics, n_init="auto", random_state=random_state).fit(X)
-    terms = _TFIDF.get_feature_names_out()
-    cent = km.cluster_centers_
-    topics = {t: [terms[i] for i in cent[t].argsort()[-top_k:][::-1]] for t in range(n_topics)}
-    assign = pd.DataFrame({"motion_id": df["motion_id"], "description": df["description"], "topic": km.labels_})
-    return topics, assign
+def intramotion_similarity_nb(df):
+    data = ims.intramotion_similarity_compare(df)
+    print("\n=== Backend comparison ===")
+    print(data["summary_table"])
+    return data
 
 
 # =========================
@@ -687,80 +422,6 @@ def lexical_richness_analysis(df):
     }
 
 
-# =========================
-# spaCy structural complexity
-# =========================
-def _dep_depth_for_token(tok):
-    """Depth of a token in the dependency tree (root depth = 0)."""
-    depth = 0
-    cur = tok
-    while cur.head is not cur:
-        depth += 1
-        cur = cur.head
-    return depth
-
-
-def spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None, batch_size=256):
-    """
-    Computes:
-      - avg_dep_depth: mean dependency depth per caption (avg over tokens)
-      - avg_sentences_per_caption
-      - avg_verbs_per_caption (from spaCy)
-      - temporal/connective rate via tokens: then/while/before/after/and (spaCy tokens; case-insensitive)
-    If spaCy/model is missing, returns a dict with 'available': False.
-    """
-    try:
-        import spacy
-        from spacy.util import is_package
-    except Exception:
-        return {"available": False, "reason": "spaCy not installed"}
-    spacy.prefer_gpu()
-    try:
-        nlp = spacy.load(spacy_model, disable=["ner"])
-    except Exception:
-        # try to download on the fly if user permits; otherwise fail gracefully
-        return {"available": False, "reason": f"spaCy model '{spacy_model}' not available"}
-
-    texts = df["description"].tolist()
-    if max_docs is not None:
-        texts = texts[:max_docs]
-
-    total_depth = 0.0
-    total_tokens = 0
-    total_sents = 0
-    total_docs = 0
-    verbs_per_cap = []
-    conj_markers = {"and", "then", "while", "before", "after"}
-    connective_hits = 0
-
-    n_processes = os.cpu_count()
-    if n_processes is None:
-        n_processes = 1
-
-    for doc in nlp.pipe(texts, batch_size=batch_size, n_process=n_processes):
-        if len(doc) == 0:
-            continue
-        depths = [_dep_depth_for_token(tok) for tok in doc]
-        total_depth += sum(depths)
-        total_tokens += len(doc)
-        total_sents += len(list(doc.sents))
-        total_docs += 1
-        verbs_per_cap.append(sum(1 for t in doc if t.pos_ == "VERB"))
-        connective_hits += sum(1 for t in doc if t.text.lower() in conj_markers)
-
-    if total_docs == 0 or total_tokens == 0:
-        return {"available": True, "note": "no tokens/docs", "avg_dep_depth": float("nan")}
-
-    return {
-        "available": True,
-        "avg_dep_depth": total_depth / total_tokens,  # token-level mean
-        "avg_sentences_per_caption": total_sents / total_docs,
-        "avg_verbs_per_caption_spacy": float(np.mean(verbs_per_cap)),
-        "connective_token_rate": connective_hits / total_tokens,  # fraction of tokens that are connectives
-        "processed_docs": total_docs,
-    }
-
-
 def analysis_routine(df: pd.DataFrame):
     if df is None:
         raise SystemExit("Please create a DataFrame `df` with columns: motion_id, description, pos_tags, num1, num2")
@@ -802,40 +463,12 @@ def analysis_routine(df: pd.DataFrame):
 
     print("\n\n")
     # D) Intra-motion similarity (both MiniLM & DistilBERT)
-    both = intramotion_similarity_compare(df)
+    both = ims.intramotion_similarity_compare(df)
     print("\n=== Backend comparison ===")
     print(both["summary_table"])
-
-    print("\n\n")
-    # E) (Optional) Quick clustering of captions
-    clustered_df, top_terms = cluster_captions(df, k=20, random_state=0)
-    print("\n=== Clustering ===")
-    print(clustered_df["cluster"].value_counts().head())
-    if top_terms is not None:
-        for c, terms in list(top_terms.items())[:3]:
-            print(f"Cluster {c} top terms: {terms}")
-
-    print("\n\n")
-    # F) (Optional) Topic overview
-    topics, assign = topic_overview(df, n_topics=10, top_k=12)
-    print("\n=== Topics (coarse) ===")
-    for t, terms in list(topics.items())[:3]:
-        print(f"Topic {t}: {terms}")
 
     print("\n\n")
     richness = lexical_richness_analysis(df)
     print("\n=== Linguistic Richness & Structural Variety ===")
     for k, v in richness.items():
         print(f"{k}: {v:.4f}")
-
-    # print("\n\n")
-    # # G) spaCy structural complexity
-    # spa = spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None)
-    # print("\n=== spaCy Structural Complexity ===")
-    # if not spa.get("available", False):
-    #     print("spaCy unavailable:", spa.get("reason"))
-    # else:
-    #     for k, v in spa.items():
-    #         if k == "available":
-    #             continue
-    #         print(f"{k}: {v}")
