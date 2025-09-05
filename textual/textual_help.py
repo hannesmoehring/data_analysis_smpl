@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import normalize as sk_normalize
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -142,6 +143,37 @@ def tokens_by_pos(parsed):
 
 def ngrams(tokens, n=2):
     return [" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1)] if len(tokens) >= n else []
+
+
+def _clean_text_df(df):
+    df = df.copy()
+    df["description"] = df["description"].astype(str)
+    df = df[df["description"].str.strip().ne("")]
+    df = df.dropna(subset=["description"])
+    return df
+
+
+def _to_2d_float32(X):
+    """
+    Ensure X is a dense (n_samples, n_features) float32 ndarray.
+    Handles lists of arrays, sparse matrices, etc.
+    """
+    # sparse -> dense
+    if hasattr(X, "toarray"):
+        X = X.toarray()
+    # list of vectors -> stack
+    if isinstance(X, (list, tuple)):
+        X = [np.asarray(x, dtype=np.float32).ravel() for x in X]
+        X = np.vstack(X) if len(X) else np.zeros((0, 0), dtype=np.float32)
+    else:
+        X = np.asarray(X, dtype=np.float32)
+    if X.ndim != 2:
+        # final guard: try vstack if it's 1D or object-y
+        try:
+            X = np.vstack([np.asarray(row, dtype=np.float32).ravel() for row in X])
+        except Exception as e:
+            raise ValueError(f"Features are not 2D; got shape {getattr(X,'shape',None)}") from e
+    return X
 
 
 # =========================
@@ -317,14 +349,20 @@ def intramotion_similarity_compare(df):
     print("\n=== Intra-motion Similarity (MiniLM) ===")
     mini_df, mini_sum = intramotion_similarity(df, model="minilm")
     print(mini_sum)
-    print("Top 3 most consistent motions (MiniLM):")
-    print(mini_df.head(3)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+    print("Top 10 most consistent motions (MiniLM):")
+    print(mini_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+    mini_df.sort_values("mean_intra_caption_sim", ascending=True, inplace=True)
+    print("Top 10 least consistent motions (MiniLM):")
+    print(mini_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
 
     print("\n=== Intra-motion Similarity (DistilBERT-uncased) ===")
     dist_df, dist_sum = intramotion_similarity(df, model="distilbert")
     print(dist_sum)
-    print("Top 3 most consistent motions (DistilBERT):")
-    print(dist_df.head(3)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+    print("Top 10 most consistent motions (DistilBERT):")
+    print(dist_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
+    dist_df.sort_values("mean_intra_caption_sim", ascending=True, inplace=True)
+    print("Top 10 least consistent motions (DistilBERT):")
+    print(dist_df.head(10)[["motion_id", "mean_intra_caption_sim", "num_captions"]])
 
     # Side-by-side summary table
     cmp_tbl = pd.DataFrame(
@@ -371,7 +409,7 @@ def sentence_embeddings(texts, model="minilm"):
         mdl.eval()
 
         all_vecs = []
-        bs = 64
+        bs = 128
         with torch.no_grad():
             for i in range(0, len(texts), bs):
                 batch = texts[i : i + bs]
@@ -427,27 +465,52 @@ def mean_pairwise_cosine(emb):
 # =========================
 
 
-def cluster_captions(df, k=20, random_state=0):
-    df = ensure_parsed(df.copy())
-    emb = sentence_embeddings(df["description"].tolist())
-    if _HAS_ST:
-        X = emb
-    else:
-        X = emb  # sparse is fine for KMeans with scikit-learn's implementation (it will densify; watch RAM)
-        if not hasattr(X, "toarray"):
-            raise RuntimeError("Unexpected embedding type.")
-        X = X.toarray()
+def cluster_captions(df, k=20, backend="minilm", random_state=0):
+    """
+    backend: 'minilm' | 'distilbert' | 'tfidf'
+    Returns:
+      df_with_cluster, top_terms (dict or None)
+    """
+    df = ensure_parsed(_clean_text_df(df))
 
-    kmeans = KMeans(n_clusters=k, n_init="auto", random_state=random_state)
-    labels = kmeans.fit_predict(X)
-    df = df.assign(cluster=labels)
-    top_terms = None
-    if not _HAS_ST:
-        # When using TF-IDF fallback, we can inspect cluster top terms by centroid weights
-        centroids = kmeans.cluster_centers_
+    texts = df["description"].tolist()
+    if len(texts) == 0:
+        raise ValueError("No non-empty descriptions to cluster.")
+
+    # Build features
+    if backend == "tfidf":
+        Xs = _TFIDF.fit_transform(texts)  # keep sparse for now
         terms = _TFIDF.get_feature_names_out()
-        top_terms = {c: [terms[i] for i in centroids[c].argsort()[-10:][::-1]] for c in range(k)}
-    return df, top_terms
+        top_terms_source = "tfidf"
+    else:
+        # use your unified embedding getter (MiniLM / DistilBERT)
+        Xs, _label = sentence_embeddings(texts, model=backend)
+        terms = None
+        top_terms_source = None
+
+    # Ensure dense 2D float32
+    X = _to_2d_float32(Xs)
+
+    n = X.shape[0]
+    if n < 2:
+        raise ValueError(f"Need at least 2 samples to cluster, got {n}.")
+    if k > n:
+        k = n  # auto-reduce clusters
+
+    # KMeans
+    km = KMeans(n_clusters=k, n_init="auto", random_state=random_state)
+    labels = km.fit_predict(X)
+
+    out = df.assign(cluster=labels)
+
+    # Optional: top terms only meaningful for TF-IDF
+    top_terms = None
+    if top_terms_source == "tfidf" and terms is not None:
+        cent = km.cluster_centers_
+        # centers are in TF-IDF feature space
+        top_terms = {c: [terms[i] for i in cent[c].argsort()[-10:][::-1]] for c in range(k)}
+
+    return out, top_terms
 
 
 # =========================
@@ -648,9 +711,10 @@ def spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None, b
     """
     try:
         import spacy
+        from spacy.util import is_package
     except Exception:
         return {"available": False, "reason": "spaCy not installed"}
-
+    spacy.prefer_gpu()
     try:
         nlp = spacy.load(spacy_model, disable=["ner"])
     except Exception:
@@ -669,7 +733,11 @@ def spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None, b
     conj_markers = {"and", "then", "while", "before", "after"}
     connective_hits = 0
 
-    for doc in nlp.pipe(texts, batch_size=batch_size):
+    n_processes = os.cpu_count()
+    if n_processes is None:
+        n_processes = 1
+
+    for doc in nlp.pipe(texts, batch_size=batch_size, n_process=n_processes):
         if len(doc) == 0:
             continue
         depths = [_dep_depth_for_token(tok) for tok in doc]
@@ -961,17 +1029,17 @@ def analysis_routine(df: pd.DataFrame):
     for k, v in richness.items():
         print(f"{k}: {v:.4f}")
 
-    print("\n\n")
-    # G) spaCy structural complexity
-    spa = spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None)
-    print("\n=== spaCy Structural Complexity ===")
-    if not spa.get("available", False):
-        print("spaCy unavailable:", spa.get("reason"))
-    else:
-        for k, v in spa.items():
-            if k == "available":
-                continue
-            print(f"{k}: {v}")
+    # print("\n\n")
+    # # G) spaCy structural complexity
+    # spa = spacy_structural_analysis(df, spacy_model="en_core_web_sm", max_docs=None)
+    # print("\n=== spaCy Structural Complexity ===")
+    # if not spa.get("available", False):
+    #     print("spaCy unavailable:", spa.get("reason"))
+    # else:
+    #     for k, v in spa.items():
+    #         if k == "available":
+    #             continue
+    #         print(f"{k}: {v}")
 
     print("\n\n")
     # H) Per-motion caption distances (MiniLM → VAE optional)
@@ -980,5 +1048,8 @@ def analysis_routine(df: pd.DataFrame):
     print("Space:", dist_summary["embedding_space"], "| VAE:", dist_summary["vae_status"])
     print("Mean-distance stats:", dist_summary["caption_distance_mean_stats"])
     print("Median-distance stats:", dist_summary["caption_distance_median_stats"])
-    print("Most diverse motions (top 5 by mean distance):")
-    print(dist_df.head(5)[["motion_id", "n_captions", "dist_mean", "dist_median", "dist_max", "dist_min"]])
+    print("Most diverse motions (top 10 by mean distance):")
+    print(dist_df.head(10)[["motion_id", "n_captions", "dist_mean", "dist_median", "dist_max", "dist_min"]])
+    print("Least diverse motions (top 10 by mean distance):")
+    dist_df.sort_values("dist_mean", ascending=True, inplace=True)
+    print(dist_df.head(10)[["motion_id", "n_captions", "dist_mean", "dist_median", "dist_max", "dist_min"]])

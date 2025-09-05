@@ -1,0 +1,174 @@
+
+=== Corpus Stats ===
+num_captions: 87384
+num_motions: 29232
+avg_tokens: 12.346699624645243
+std_tokens: 7.1243926688662444
+median_tokens: 10.0
+vocab_size: 5371
+top_20_words: [('a', 85812), ('person', 65716), ('and', 46456), ('the', 42792), ('to', 34556), ('walk', 29618), ('then', 27784), ('their', 27564), ('hand', 23426), ('his', 22676)] ...
+pos_distribution: {'DET': 194540, 'NOUN': 264355, 'VERB': 189832, 'ADP': 127514, 'CCONJ': 48480, 'ADV': 109558, 'PART': 11996, 'AUX': 25159, 'NUM': 5435, 'ADJ': 53248, 'PRON': 30744, 'SCONJ': 14406, 'PROPN': 2922, 'X': 144, 'INTJ': 569, 'SYM': 2}
+pos_means_per_caption: {'mean_ADJ': 0.6093564039183375, 'mean_NOUN': 3.0252105648631327, 'mean_ADV': 1.2537535475601942, 'mean_VERB': 2.1723885379474503, 'mean_ADP': 1.459237388995697, 'mean_PRON': 0.35182642131282615}
+captions_per_motion_mean: 2.9893267651888342
+captions_per_motion_median: 3.0
+
+
+
+
+=== Motion-specific Cues ===
+Top verbs: [('walk', 29306), ('stand', 8839), ('turn', 7153), ('move', 6450), ('raise', 5515), ('take', 5072), ('jump', 4265), ('step', 3801), ('hold', 3665), ('sit', 3548)] ...
+Rate with direction cues: 0.587
+Rate with speed cues: 0.073
+Rate with body-part mentions: 0.473
+
+
+
+
+=== Actor Addressing ===
+Label rates: {'neutral_noun': 0.746, 'male_noun': 0.131, 'none': 0.103, 'male_pron': 0.013, 'neutral_pron': 0.005, 'female_noun': 0.001, 'female_pron': 0.001}
+Top actor nouns: [('person', 65714), ('man', 11480), ('woman', 64), ('subject', 58), ('people', 56), ('individual', 48), ('guy', 32), ('child', 16), ('girl', 16), ('someone', 14)] ...
+Per-motion (top 5 by gendered share):
+      motion_id  share_gendered_captions  share_neutral_captions
+14863   M000247                      1.0                     0.0
+4697     004697                      1.0                     0.0
+4767     004767                      1.0                     0.0
+4840     004840                      1.0                     0.0
+4847     004847                      1.0                     0.0
+
+
+
+
+=== Redundancy ===
+Duplicate caption rate: 0.3672
+Top bigrams: [('a person', 46652), ('person is', 12068), ('to the', 10628), ('person walks', 10248), ('and then', 9548), ('the person', 9216), ('a man', 8574), ('in a', 8418), ('walks forward', 7380), ('their right', 5963)] ...
+Top trigrams: [('a person walks', 8480), ('a person is', 5058), ('the person is', 4570), ('person walks forward', 4416), ('to the right', 3758), ('to the left', 3758), ('person is walking', 2650), ('in front of', 2526), ('their right hand', 2242), ('their left hand', 2242)] ...
+
+
+
+
+=== Intra-motion Similarity (MiniLM) ===
+{'backend': 'minilm', 'mean_of_means': 0.5800448759499252, 'median_of_means': 0.5837214589118958, 'quantiles': {0.1: 0.39382848143577576, 0.25: 0.4834771752357483, 0.5: 0.5837214589118958, 0.75: 0.6779015511274338, 0.9: 0.7596140503883362}}
+Top 10 most consistent motions (MiniLM):
+      motion_id  mean_intra_caption_sim  num_captions
+11777    011777                0.993266             3
+12854    012854                0.993049             3
+27470   M012854                0.993048             3
+23525   M008909                0.992602             3
+8909     008909                0.992602             3
+26393   M011777                0.991027             3
+25051   M010435                0.989314             3
+10435    010435                0.989314             3
+10270    010270                0.986668             3
+24886   M010270                0.986668             3
+Top 10 least consistent motions (MiniLM):
+      motion_id  mean_intra_caption_sim  num_captions
+22019   M007403                0.084758             3
+15356   M000740                0.094903             3
+740      000740                0.094903             3
+24836   M010220                0.101384             3
+10220    010220                0.101384             3
+7403     007403                0.102075             3
+11401    011401                0.102580             3
+26017   M011401                0.103215             3
+1541     001541                0.113053             3
+16157   M001541                0.113053             3
+
+=== Intra-motion Similarity (DistilBERT-uncased) ===
+Using device: mps
+{'backend': 'distilbert-meanpool', 'mean_of_means': 0.8354338347210027, 'median_of_means': 0.8375999331474304, 'quantiles': {0.1: 0.7716593742370605, 0.25: 0.8034215420484543, 0.5: 0.8375999331474304, 0.75: 0.8697329163551331, 0.9: 0.8960545361042023}}
+Top 10 most consistent motions (DistilBERT):
+      motion_id  mean_intra_caption_sim  num_captions
+26393   M011777                0.993876             3
+11777    011777                0.993800             3
+8909     008909                0.993697             3
+23525   M008909                0.993697             3
+24994   M010378                0.986790             3
+10378    010378                0.981942             3
+27491   M012875                0.977813             3
+12875    012875                0.977813             3
+8114     008114                0.975920             3
+22730   M008114                0.975920             3
+Top 10 least consistent motions (DistilBERT):
+      motion_id  mean_intra_caption_sim  num_captions
+193      000193                0.626729             3
+14809   M000193                0.626729             3
+8437     008437                0.630486             3
+23053   M008437                0.640141             3
+26017   M011401                0.644801             3
+914      000914                0.645341             3
+15530   M000914                0.645341             3
+11401    011401                0.645594             3
+7782     007782                0.646685             3
+22398   M007782                0.646685             3
+
+=== Backend comparison ===
+               backend  mean_of_means  median_of_means  \
+0               minilm       0.580045         0.583721   
+1  distilbert-meanpool       0.835434         0.837600   
+
+                                           quantiles  
+0  {0.1: 0.39382848143577576, 0.25: 0.48347717523...  
+1  {0.1: 0.7716593742370605, 0.25: 0.803421542048...  
+
+
+
+
+=== Clustering ===
+cluster
+8     10440
+6      7837
+17     7288
+14     6820
+11     5421
+Name: count, dtype: int64
+
+
+
+
+=== Topics (coarse) ===
+Topic 0: ['is walking', 'walking', 'person is', 'is', 'walking forward', 'the person', 'person', 'the', 'forward', 'walking in', 'walking around', 'in']
+Topic 1: ['their', 'arms', 'hands', 'both', 'their arms', 'person', 'their hands', 'and', 'them', 'in', 'of', 'with']
+Topic 2: ['to the', 'the', 'to', 'the left', 'the right', 'left', 'right', 'and', 'then', 'walks', 'person', 'side']
+
+
+
+
+=== Linguistic Richness & Structural Variety ===
+TTR: 0.0050
+distinct-1: 0.0050
+distinct-2: 0.0504
+distinct-3: 0.1568
+mean_verbs_per_caption: 2.1724
+conj_rate: 0.0771
+
+
+
+
+=== Caption Distance per Motion ===
+Space: minilm+vae | VAE: ok
+Mean-distance stats: {'min': 0.9999990463256836, 'median': 0.9999999403953552, 'mean': 0.9999999201939179, 'max': 1.0000005960464478}
+Median-distance stats: {'min': 0.999998927116394, 'median': 0.9999999403953552, 'mean': 0.9999999258491779, 'max': 1.0000007152557373}
+Most diverse motions (top 10 by mean distance):
+      motion_id  n_captions  dist_mean  dist_median  dist_max  dist_min
+19533   M004917           3   1.000001     1.000001  1.000001       1.0
+16191   M001575           3   1.000001     1.000000  1.000002       1.0
+1575     001575           3   1.000001     1.000000  1.000002       1.0
+15356   M000740           3   1.000000     1.000001  1.000001       1.0
+25981   M011365           3   1.000000     1.000000  1.000001       1.0
+24206   M009590           3   1.000000     1.000000  1.000001       1.0
+4917     004917           3   1.000000     1.000001  1.000001       1.0
+193      000193           3   1.000000     1.000000  1.000001       1.0
+740      000740           3   1.000000     1.000001  1.000001       1.0
+11365    011365           3   1.000000     1.000000  1.000001       1.0
+Least diverse motions (top 10 by mean distance):
+      motion_id  n_captions  dist_mean  dist_median  dist_max  dist_min
+10532    010532           3   0.999999     0.999999  1.000000  0.999998
+25148   M010532           3   0.999999     0.999999  1.000000  0.999998
+7334     007334           3   0.999999     0.999999  1.000000  0.999999
+12751    012751           3   0.999999     0.999999  0.999999  0.999999
+27367   M012751           3   0.999999     0.999999  0.999999  0.999999
+21950   M007334           3   0.999999     0.999999  1.000000  0.999999
+28064   M013448           3   0.999999     1.000000  1.000000  0.999998
+13448    013448           3   0.999999     1.000000  1.000000  0.999998
+17652   M003036           3   0.999999     0.999999  0.999999  0.999999
+12854    012854           3   0.999999     0.999999  0.999999  0.999999
