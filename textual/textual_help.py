@@ -103,25 +103,6 @@ _ACTOR_NOUNS = {
 _PRONOUNS = {"male": {"he", "him", "his"}, "female": {"she", "her", "hers"}, "neutral": {"they", "them", "their", "theirs"}}
 
 
-def parse_pos_tag_string(pos_str):
-    """
-    Input: 'a/DET man/NOUN kick/VERB ...'
-    Output: list of dicts: [{'tok':'a','pos':'DET'},{'tok':'man','pos':'NOUN'},...]
-    Robust to trailing spaces and stray tokens without '/'.
-    """
-    items = []
-    for w in pos_str.strip().split():
-        if "/" not in w:  # robustness
-            continue
-        tok, pos = w.rsplit("/", 1)
-        tok = tok.strip()
-        pos = pos.strip().upper()
-        if not tok:
-            continue
-        items.append({"tok": tok, "pos": pos})
-    return items
-
-
 def tokens_by_pos(parsed):
     out = defaultdict(list)
     for d in parsed:
@@ -131,19 +112,6 @@ def tokens_by_pos(parsed):
 
 def ngrams(tokens, n=2):
     return [" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1)] if len(tokens) >= n else []
-
-
-# =========================
-# 1) Prepare parsed POS columns
-# =========================
-def ensure_parsed(df):
-    if "parsed_pos" not in df.columns:
-        df["parsed_pos"] = df["pos_tags"].apply(parse_pos_tag_string)
-    if "tokens" not in df.columns:
-        df["tokens"] = df["parsed_pos"].apply(lambda lst: [d["tok"] for d in lst])
-    if "pos_list" not in df.columns:
-        df["pos_list"] = df["parsed_pos"].apply(lambda lst: [d["pos"] for d in lst])
-    return df
 
 
 # =========================
@@ -256,7 +224,7 @@ def redundancy_analysis(df, n_values=(2, 3)):
 # ==========================
 # 5) Intra-motion similarity (IMS)
 # ==========================
-ims = IntraMotionSimilarity(ensure_parsed_func=ensure_parsed)
+ims = IntraMotionSimilarity()
 
 
 def intramotion_similarity_nb(df):

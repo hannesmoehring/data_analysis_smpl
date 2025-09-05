@@ -31,8 +31,8 @@ _TFIDF = TfidfVectorizer(min_df=2, max_df=0.9, ngram_range=(1, 2))
 
 
 class IntraMotionSimilarity:
-    def __init__(self, ensure_parsed_func):
-        self.ensure_parsed = ensure_parsed_func
+    def __init__(self):
+        self.ensure_parsed = th_utility.ensure_parsed
 
     def intramotion_similarity(self, df, model="minilm"):
         df = self.ensure_parsed(df.copy())
