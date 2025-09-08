@@ -1,0 +1,197 @@
+
+HumanML3D
+=== Intra-motion Similarity (MiniLM) ===
+Using device: mps
+{'backend': 'minilm', 'mean_of_means': 0.5800448759499252, 'median_of_means': 0.5837214589118958, 'quantiles': {0.1: 0.39382848143577576, 0.25: 0.4834771752357483, 0.5: 0.5837214589118958, 0.75: 0.6779015511274338, 0.9: 0.7596140503883362}}
+Top 10 most consistent motions (MiniLM):
+      motion_id  mean_intra_caption_sim  num_captions
+11777    011777                0.993266             3
+12854    012854                0.993049             3
+27470   M012854                0.993048             3
+23525   M008909                0.992602             3
+8909     008909                0.992602             3
+26393   M011777                0.991027             3
+25051   M010435                0.989314             3
+10435    010435                0.989314             3
+10270    010270                0.986668             3
+24886   M010270                0.986668             3
+Top 10 least consistent motions (MiniLM):
+      motion_id  mean_intra_caption_sim  num_captions
+22019   M007403                0.084758             3
+15356   M000740                0.094903             3
+740      000740                0.094903             3
+24836   M010220                0.101384             3
+10220    010220                0.101384             3
+7403     007403                0.102075             3
+11401    011401                0.102580             3
+26017   M011401                0.103215             3
+1541     001541                0.113053             3
+16157   M001541                0.113053             3
+
+=== Intra-motion Similarity (mpnet) ===
+Using device: mps
+/Users/hannesmoehring/.pyenv/versions/glob/lib/python3.9/site-packages/torch/utils/data/dataloader.py:684: UserWarning: 'pin_memory' argument is set as true but not supported on MPS now, then device pinned memory won't be used.
+  warnings.warn(warn_msg)
+{'backend': 'mpnet', 'mean_of_means': 0.7314005342780369, 'median_of_means': 0.7363319396972656, 'quantiles': {0.1: 0.6047735810279846, 0.25: 0.6692405939102173, 0.5: 0.7363319396972656, 0.75: 0.7981474548578262, 0.9: 0.8532691895961761}}
+Top 10 most consistent motions (mpnet):
+      motion_id  mean_intra_caption_sim  num_captions
+8114     008114                0.994180             3
+22730   M008114                0.994180             3
+27470   M012854                0.990040             3
+12854    012854                0.990040             3
+9026     009026                0.987586             3
+5337     005337                0.986544             3
+19953   M005337                0.986544             3
+23642   M009026                0.986183             3
+28418   M013802                0.981296             3
+13802    013802                0.980955             3
+Top 10 least consistent motions (mpnet):
+      motion_id  mean_intra_caption_sim  num_captions
+14818   M000202                0.246966             2
+202      000202                0.246966             2
+16716   M002100                0.324305             2
+2100     002100                0.330672             2
+7403     007403                0.332462             3
+10563    010563                0.336142             3
+25179   M010563                0.338981             3
+22019   M007403                0.351879             3
+740      000740                0.359626             3
+15356   M000740                0.359626             3
+
+=== Intra-motion Similarity (DistilBERT-uncased) ===
+Using device: mps
+{'backend': 'distilbert-meanpool', 'mean_of_means': 0.8354338347454844, 'median_of_means': 0.8375999331474304, 'quantiles': {0.1: 0.7716593742370605, 0.25: 0.8034215420484543, 0.5: 0.8375999331474304, 0.75: 0.8697329163551331, 0.9: 0.8960545063018799}}
+Top 10 most consistent motions (DistilBERT):
+      motion_id  mean_intra_caption_sim  num_captions
+26393   M011777                0.993876             3
+11777    011777                0.993800             3
+8909     008909                0.993697             3
+23525   M008909                0.993697             3
+24994   M010378                0.986790             3
+10378    010378                0.981942             3
+27491   M012875                0.977813             3
+12875    012875                0.977813             3
+8114     008114                0.975920             3
+22730   M008114                0.975920             3
+Top 10 least consistent motions (DistilBERT):
+      motion_id  mean_intra_caption_sim  num_captions
+193      000193                0.626729             3
+14809   M000193                0.626729             3
+8437     008437                0.630486             3
+23053   M008437                0.640141             3
+26017   M011401                0.644801             3
+914      000914                0.645341             3
+15530   M000914                0.645341             3
+11401    011401                0.645594             3
+7782     007782                0.646685             3
+22398   M007782                0.646685             3
+
+=== Backend comparison ===
+               backend  mean_of_means  median_of_means  \
+0               minilm       0.580045         0.583721   
+1  distilbert-meanpool       0.835434         0.837600   
+
+                                           quantiles  
+0  {0.1: 0.39382848143577576, 0.25: 0.48347717523...  
+1  {0.1: 0.7716593742370605, 0.25: 0.803421542048...  
+
+
+
+
+KIT
+
+=== Intra-motion Similarity (MiniLM) ===
+Using device: mps
+{'backend': 'minilm', 'mean_of_means': 0.6855181297201225, 'median_of_means': 0.6957469880580902, 'quantiles': {0.1: 0.49551954269409176, 0.25: 0.596465215086937, 0.5: 0.6957469880580902, 0.75: 0.7820118516683578, 0.9: 0.8623410046100617}}
+Top 10 most consistent motions (MiniLM):
+     motion_id  mean_intra_caption_sim  num_captions
+3446    M00444                1.000000             2
+437      00444                1.000000             2
+4143    M01142                1.000000             2
+1134     01142                1.000000             2
+1336     01344                0.997793             2
+1341     01349                0.997793             2
+4350    M01349                0.997793             2
+4345    M01344                0.997793             2
+218      00223                0.996539             2
+3227    M00223                0.996539             2
+Top 10 least consistent motions (MiniLM):
+     motion_id  mean_intra_caption_sim  num_captions
+4418    M01417                0.176641             2
+1409     01417                0.178581             2
+450      00457                0.190295             2
+1483     01491                0.192627             2
+4492    M01491                0.193930             2
+4472    M01471                0.206770             2
+1463     01471                0.209274             2
+3738    M00736                0.217768             3
+729      00736                0.233567             3
+3049    M00042                0.249847             4
+
+=== Intra-motion Similarity (mpnet) ===
+Using device: mps
+/Users/hannesmoehring/.pyenv/versions/glob/lib/python3.9/site-packages/torch/utils/data/dataloader.py:684: UserWarning: 'pin_memory' argument is set as true but not supported on MPS now, then device pinned memory won't be used.
+  warnings.warn(warn_msg)
+
+{'backend': 'mpnet', 'mean_of_means': 0.9034719208902537, 'median_of_means': 0.917329877614975, 'quantiles': {0.1: 0.8259671986103058, 0.25: 0.8772928863763809, 0.5: 0.917329877614975, 0.75: 0.9483074694871902, 0.9: 0.9674451529979706}}
+Top 10 most consistent motions (mpnet):
+     motion_id  mean_intra_caption_sim  num_captions
+1134     01142                1.000000             2
+3446    M00444                1.000000             2
+437      00444                1.000000             2
+4143    M01142                1.000000             2
+4378    M01377                0.998109             3
+1369     01377                0.998006             3
+1781     01810                0.996939             2
+4350    M01349                0.996667             2
+1336     01344                0.996667             2
+1341     01349                0.996667             2
+Top 10 least consistent motions (mpnet):
+     motion_id  mean_intra_caption_sim  num_captions
+350      00356                0.327030             2
+3359    M00356                0.336744             2
+4923    M01943                0.411722             3
+1914     01943                0.411722             3
+314      00320                0.552722             4
+3323    M00320                0.565189             4
+4374    M01373                0.573695             2
+4885    M01905                0.579444             2
+1876     01905                0.579444             2
+4373    M01372                0.584673             2
+
+=== Intra-motion Similarity (DistilBERT-uncased) ===
+Using device: mps
+{'backend': 'distilbert-meanpool', 'mean_of_means': 0.853011277345559, 'median_of_means': 0.8546164929866791, 'quantiles': {0.1: 0.7899687767028809, 0.25: 0.8219884037971497, 0.5: 0.8546164929866791, 0.75: 0.8874177932739258, 0.9: 0.9177315711975098}}
+Top 10 most consistent motions (DistilBERT):
+     motion_id  mean_intra_caption_sim  num_captions
+4143    M01142                1.000000             2
+3446    M00444                1.000000             2
+1134     01142                1.000000             2
+437      00444                1.000000             2
+389      00396                0.988545             2
+1369     01377                0.986839             3
+4378    M01377                0.986054             3
+3353    M00350                0.982348             3
+1824     01853                0.977935             2
+4833    M01853                0.975996             2
+Top 10 least consistent motions (DistilBERT):
+     motion_id  mean_intra_caption_sim  num_captions
+653      00660                0.639814             3
+3662    M00660                0.639814             3
+3790    M00788                0.650089             2
+781      00788                0.653928             2
+845      00852                0.668277             2
+3854    M00852                0.668277             2
+1409     01417                0.669160             2
+4418    M01417                0.669509             2
+3049    M00042                0.678032             4
+1936     01965                0.685886             2
+
+=== Backend comparison ===
+               backend  mean_of_means  median_of_means  \
+0               minilm       0.685518         0.695747   
+1  distilbert-meanpool       0.853011         0.854616   
+
+                                           quantiles  
+0  {0.1: 0.49551954269409176, 0.25: 0.59646521508...  
+1  {0.1: 0.7899687767028809, 0.25: 0.821988403797...  

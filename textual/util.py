@@ -1,6 +1,7 @@
 import os
 
 
+# removes ids deemed bad from all txt files from datasets eg. humanml3d/texts
 def remove_bad_ids(data_dir, bad_ids):
     files = ["all.txt", "train.txt", "val.txt", "test.txt", "train_val.txt"]
 

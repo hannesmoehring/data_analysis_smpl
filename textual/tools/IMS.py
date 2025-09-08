@@ -8,8 +8,6 @@ from sklearn.preprocessing import normalize as sk_normalize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from torch.utils.data import DataLoader
 from sentence_transformers import SentenceTransformer, losses
-from sentence_transformers import models as st_models
-from sentence_transformers import util as st_utils
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 try:
@@ -36,9 +34,8 @@ class IntraMotionSimilarity:
 
     def intramotion_similarity(self, df, model="minilm"):
         df = self.ensure_parsed(df.copy())
-        # Precompute embeddings once
         Z, label = self.sentence_embeddings(df, model=model)
-        # Map row idx -> vector
+        # maping row idx -> vector
         idx_to_vec = {i: Z[i] for i in range(len(Z))}
 
         rows = []
@@ -58,11 +55,10 @@ class IntraMotionSimilarity:
         return out, summary
 
     def _mean_pool(self, last_hidden, attention_mask):
-        # last_hidden: [B, T, H], attention_mask: [B, T]
-        mask = attention_mask.unsqueeze(-1).float()  # [B, T, 1]
+        mask = attention_mask.unsqueeze(-1).float()
         masked = last_hidden * mask
-        summed = masked.sum(dim=1)  # [B, H]
-        counts = mask.sum(dim=1).clamp(min=1e-6)  # [B, 1]
+        summed = masked.sum(dim=1)
+        counts = mask.sum(dim=1).clamp(min=1e-6)
         return summed / counts
 
     def _mean_pairwise_cosine_from_normed(self, V):
@@ -155,7 +151,7 @@ class IntraMotionSimilarity:
 
             tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
             mdl = AutoModel.from_pretrained("distilbert-base-uncased")
-            # device = "cuda" if torch.cuda.is_available() else "cpu"
+
             mdl = mdl.to(device)
             mdl.eval()
 
@@ -166,14 +162,13 @@ class IntraMotionSimilarity:
                     batch = texts[i : i + bs]
                     inputs = tok(batch, padding=True, truncation=True, return_tensors="pt").to(device)
                     out = mdl(**inputs)
-                    pooled = self._mean_pool(out.last_hidden_state, inputs["attention_mask"])  # [B, H]
+                    pooled = self._mean_pool(out.last_hidden_state, inputs["attention_mask"])
                     all_vecs.append(pooled.cpu())
             Z = torch.cat(all_vecs, dim=0).numpy()
             # L2 normalize
             Z = Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-9)
             return Z, "distilbert-meanpool"
 
-        # TF-IDF (explicit request or fallback)
         X = _TFIDF.fit_transform(texts)
         Z = sk_normalize(X).toarray()
         return Z, "tfidf"
@@ -183,10 +178,10 @@ class IntraMotionSimilarity:
         emb: np.array [N,D] if ST; sparse if TF-IDF
         returns mean of upper-triangular pairwise cosine (excluding self-similarity)
         """
-        if getattr(emb, "ndim", None) is None:  # sparse case (TF-IDF)
+        if getattr(emb, "ndim", None) is None:
             sims = cosine_similarity(emb)
         else:
-            sims = np.clip(np.dot(emb, emb.T), -1, 1)  # normalized ST embeddings
+            sims = np.clip(np.dot(emb, emb.T), -1, 1)
         n = sims.shape[0]
         if n < 2:
             return np.nan

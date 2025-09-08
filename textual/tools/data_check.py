@@ -1,3 +1,7 @@
+# Check consistency between new_joint_vecs and new_joints
+# This is more of a sanity check than a real data check.
+
+
 import os
 
 import numpy as np

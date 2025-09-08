@@ -16,7 +16,7 @@ def build_same_motion_pairs(df: pd.DataFrame, seed: int = 42) -> list:
         descs = sub["description"].dropna().tolist()
         if len(descs) < 2:
             continue
-        comb = list(combinations(range(len(descs)), 2))  # all i<j pairs
+        comb = list(combinations(range(len(descs)), 2))
         if len(comb) > 100:
             comb = list(rng.choice(len(comb), size=100, replace=False))
             comb = [list(combinations(range(len(descs)), 2))[k] for k in comb]
@@ -34,7 +34,7 @@ def parse_pos_tag_string(pos_str):
     """
     items = []
     for w in pos_str.strip().split():
-        if "/" not in w:  # robustness
+        if "/" not in w:
             continue
         tok, pos = w.rsplit("/", 1)
         tok = tok.strip()
